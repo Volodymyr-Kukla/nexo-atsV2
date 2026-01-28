@@ -1,0 +1,7 @@
+-r base.txt
+
+ruff
+black
+isort
+pytest
+pytest-django

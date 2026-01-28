@@ -1,0 +1,47 @@
+# --- OS ---
+.DS_Store
+Thumbs.db
+
+# --- IDE ---
+.vscode/
+.idea/
+*.iml
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+.env
+.env.*
+!.env.example
+
+# venv
+backend/.venv/
+.venv/
+
+# --- Django ---
+backend/media/
+backend/staticfiles/
+*.log
+
+# --- Node ---
+node_modules/
+frontend/.next/
+frontend/out/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# --- Misc ---
+*.sqlite3
