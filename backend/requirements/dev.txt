@@ -5,3 +5,5 @@ black
 isort
 pytest
 pytest-django
+djangorestframework-simplejwt>=5.3,<6.0
+djangorestframework-simplejwt==5.5.1
