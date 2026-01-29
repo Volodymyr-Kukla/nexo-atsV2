@@ -78,6 +78,9 @@ INSTALLED_APPS = [
     # local
     "core",
     "users",
+    "projects.apps.ProjectsConfig",
+    "candidates",
+    "pipeline",
 ]
 
 MIDDLEWARE = [
