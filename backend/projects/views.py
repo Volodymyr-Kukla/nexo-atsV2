@@ -3,9 +3,12 @@ import csv
 from datetime import datetime
 from io import StringIO
 
+from django.db import transaction
 from django.db.models import Count, Q
 from django.http import HttpResponse
-from pipeline.models import Stage
+from pipeline.models import Application, Stage
+from pipeline.permissions import CanWriteProjectPipeline
+from pipeline.serializers import ApplicationCardSerializer, KanbanReorderSerializer
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -122,6 +125,104 @@ class ProjectViewSet(viewsets.ModelViewSet):
             "total_candidates": project.applications.filter(is_archived=False).count(),
         }
         return Response(data)
+
+    @action(detail=True, methods=["get"], url_path="kanban")
+    def kanban(self, request, pk=None):
+        """
+        Повертає дані для Kanban дошки:
+        stages[] + applications[] у кожній колонці.
+        """
+        project = self.get_object()
+
+        stages = Stage.objects.filter(project=project).order_by("order", "id")
+        apps = (
+            Application.objects.filter(project=project, is_archived=False)
+            .select_related("candidate", "current_stage")
+            .prefetch_related("candidate__skills")
+            .order_by("current_stage__order", "position_in_stage", "-updated_at", "id")
+        )
+
+        stage_map = {s.id: [] for s in stages}
+        for app in apps:
+            stage_map.setdefault(app.current_stage_id, []).append(app)
+
+        result_stages = []
+        for stage in stages:
+            items = stage_map.get(stage.id, [])
+            result_stages.append(
+                {
+                    "id": stage.id,
+                    "name": stage.name,
+                    "system_key": stage.system_key,
+                    "order": stage.order,
+                    "is_final": stage.is_final,
+                    "candidates_count": len(items),
+                    "applications": ApplicationCardSerializer(items, many=True).data,
+                }
+            )
+
+        return Response({"project_id": project.id, "stages": result_stages})
+
+    @action(detail=True, methods=["post"], url_path=r"kanban/reorder")
+    def kanban_reorder(self, request, pk=None):
+        """
+        Оновлює position_in_stage для карток у конкретній колонці.
+        body: { "stage_id": <id>, "ordered_application_ids": [..] }
+        """
+        project = self.get_object()
+
+        # write permission
+        if not CanWriteProjectPipeline().has_object_permission(request, self, project):
+            return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+
+        serializer = KanbanReorderSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        stage_id = serializer.validated_data["stage_id"]
+        ordered_ids = serializer.validated_data["ordered_application_ids"]
+
+        stage = Stage.objects.filter(project=project, id=stage_id).first()
+        if not stage:
+            return Response(
+                {"detail": "Stage not found in this project"}, status=status.HTTP_404_NOT_FOUND
+            )
+
+        qs = Application.objects.filter(
+            project=project, current_stage=stage, is_archived=False
+        ).order_by("position_in_stage", "id")
+        apps = list(qs)
+        apps_by_id = {a.id: a for a in apps}
+
+        # validate ids belong to this stage
+        invalid = [aid for aid in ordered_ids if aid not in apps_by_id]
+        if invalid:
+            return Response(
+                {
+                    "detail": "Some application ids do not belong to this stage",
+                    "invalid_ids": invalid,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # ensure uniqueness
+        seen = set()
+        unique_ordered = []
+        for aid in ordered_ids:
+            if aid in seen:
+                continue
+            seen.add(aid)
+            unique_ordered.append(aid)
+
+        remaining = [a.id for a in apps if a.id not in seen]
+        final_ids = unique_ordered + remaining
+
+        with transaction.atomic():
+            for idx, aid in enumerate(final_ids, start=1):
+                Application.objects.filter(id=aid).update(position_in_stage=idx)
+
+        return Response(
+            {"stage_id": stage.id, "ordered_application_ids": final_ids}, status=status.HTTP_200_OK
+        )
 
     @action(detail=True, methods=["get", "post"], url_path="members")
     def members(self, request, pk=None):
